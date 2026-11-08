@@ -1,0 +1,21 @@
+{
+  "name": "pi-desktop-annotate",
+  "version": "0.2.0",
+  "description": "Native live desktop annotations and per-note visual evidence for Pi",
+  "type": "module",
+  "keywords": ["pi-package", "annotation", "desktop", "macos"],
+  "license": "MIT",
+  "files": ["src", "native", "scripts", "README.md", "LICENSE"],
+  "pi": { "extensions": ["./src/index.ts"] },
+  "scripts": {
+    "build:native": "node scripts/build-native.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "tsc --noEmit",
+    "test:desktop": "node test/native-smoke.mjs",
+    "start": "node scripts/build-native.mjs && \"build/Pi Desktop Annotate.app/Contents/MacOS/PiDesktopAnnotate\""
+  },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
+  "devDependencies": { "@earendil-works/pi-coding-agent": "^1.5.0", "@types/node": "^22.0.0", "typescript": "^5.9.0" },
+  "engines": { "node": ">=22" },
+  "os": ["darwin"]
+}
