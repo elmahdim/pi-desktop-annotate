@@ -225,6 +225,8 @@ enum UndoAction { case note(Int), mask, stroke }
     var signals: [DispatchSourceSignal] = []
     var streamStarted = false
     var sending = false
+    // Resolved once at launch: Pi passes --output <dir> (survives LaunchServices launch without env).
+    let outputDirectory: URL? = resolveOutputDirectory()
     var selectedWindow: SCWindow?
     let sourceButton = NSButton(title: "Desktop ▾", target: nil, action: nil)
     let sourcePopover = NSPopover()
@@ -264,6 +266,11 @@ enum UndoAction { case note(Int), mask, stroke }
         let restore = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
         restore.setEventHandler { [weak self] in self?.restoreWindows() }; restore.resume(); signals.append(restore)
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        // Pi can't signal the LaunchServices-detached app via its `open` child, so expose the real PID.
+        if let directory = outputDirectory {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try? "\(getpid())".write(to: directory.appendingPathComponent("app.pid"), atomically: true, encoding: .utf8)
+        }
         if let flag = CommandLine.arguments.firstIndex(of: "--self-test"), CommandLine.arguments.count > flag + 1 {
             do {
                 try runSelfTest(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]))
@@ -714,7 +721,7 @@ enum UndoAction { case note(Int), mask, stroke }
         if response == .alertThirdButtonReturn { reviewFeedback(); return }
         guard response == .alertFirstButtonReturn else { return }
         let output: URL
-        if let path = ProcessInfo.processInfo.environment["PI_ANNOTATE_OUTPUT"] { output = URL(fileURLWithPath: path) }
+        if let directory = outputDirectory { output = directory }
         else {
             let dialog = NSOpenPanel(); dialog.canChooseDirectories = true; dialog.canChooseFiles = false; dialog.canCreateDirectories = true
             dialog.message = "Choose where to save the feedback bundle"
@@ -724,7 +731,7 @@ enum UndoAction { case note(Int), mask, stroke }
         sending = true; refreshActions(); status("Exporting masked evidence…")
         do {
             try exportBundle(notes: notes, masks: masks, strokes: strokes, fallback: fallback, to: output)
-            if ProcessInfo.processInfo.environment["PI_ANNOTATE_OUTPUT"] == nil { NSWorkspace.shared.open(output) }
+            if outputDirectory == nil { NSWorkspace.shared.open(output) }
             NSApp.terminate(nil)
         } catch { sending = false; refreshActions(); status("Export failed: \(error.localizedDescription)") }
     }
@@ -844,9 +851,19 @@ enum UndoAction { case note(Int), mask, stroke }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         targetTimer?.invalidate()
+        // Sentinel marking a clean shutdown; written after any Send export, so annotations.json
+        // (which Pi checks first) still takes priority over treating this as a cancel.
+        if let directory = outputDirectory { try? Data().write(to: directory.appendingPathComponent("closed")) }
         Task { await capture.stop(); sender.reply(toApplicationShouldTerminate: true) }
         return .terminateLater
     }
+}
+
+func resolveOutputDirectory() -> URL? {
+    let args = CommandLine.arguments
+    if let flag = args.firstIndex(of: "--output"), args.count > flag + 1 { return URL(fileURLWithPath: args[flag + 1]) }
+    if let path = ProcessInfo.processInfo.environment["PI_ANNOTATE_OUTPUT"] { return URL(fileURLWithPath: path) }
+    return nil
 }
 
 MainActor.assumeIsolated {

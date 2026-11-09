@@ -1,7 +1,7 @@
 import { getMarkdownTheme, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Container, Image, Markdown, Spacer, Text } from '@earendil-works/pi-tui';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,14 +31,26 @@ export default function desktopAnnotate(pi: ExtensionAPI) {
     }
     return view;
   });
-  type Run = { child?: ChildProcess; native?: boolean; cancelled: boolean; done: Promise<void> };
+  type Run = { child?: ChildProcess; directory?: string; native?: boolean; cancelled: boolean; done: Promise<void> };
   let active: Run | undefined;
+  // The app is launched via LaunchServices (`open`) so it is its own TCC responsible process;
+  // that detaches it from our `open` child, so we signal it by the PID it writes at startup.
+  const readAppPid = async (directory: string): Promise<number | undefined> => {
+    try { const pid = Number.parseInt(await readFile(join(directory, 'app.pid'), 'utf8'), 10); return Number.isInteger(pid) ? pid : undefined; }
+    catch { return undefined; }
+  };
+  const signalApp = async (directory: string | undefined, signal: NodeJS.Signals) => {
+    if (!directory) return;
+    const pid = await readAppPid(directory);
+    if (pid !== undefined) { try { process.kill(pid, signal); } catch { /* already gone */ } }
+  };
   const stop = async () => {
     const current = active;
     if (!current) return;
     current.cancelled = true;
+    await signalApp(current.directory, 'SIGTERM');
     current.child?.kill('SIGTERM');
-    const timer = setTimeout(() => current.child?.kill('SIGKILL'), 2000);
+    const timer = setTimeout(() => { void signalApp(current.directory, 'SIGKILL'); current.child?.kill('SIGKILL'); }, 2000);
     try { await current.done; } finally { clearTimeout(timer); }
   };
   pi.on('session_shutdown', stop);
@@ -50,7 +62,7 @@ export default function desktopAnnotate(pi: ExtensionAPI) {
       if (!ctx.hasUI) throw new Error('Desktop Annotate requires an interactive Pi session and a graphical desktop.');
       if (process.platform !== 'darwin') { ctx.ui.notify('The native companion currently requires macOS 14 or newer.', 'error'); return; }
       if (active) {
-        if (active.native) active.child?.kill('SIGUSR1');
+        if (active.native) await signalApp(active.directory, 'SIGUSR1');
         ctx.ui.notify('Desktop annotations are already open. Restoring the toolbar if minimized.', 'info');
         return;
       }
@@ -77,11 +89,15 @@ export default function desktopAnnotate(pi: ExtensionAPI) {
         await run(process.execPath, [join(root, 'scripts/build-native.mjs')]);
         if (current.cancelled) return;
         directory = await mkdtemp(join(tmpdir(), 'pi-annotate-'));
+        current.directory = directory;
         if (current.cancelled) return;
         ctx.ui.setStatus('desktop-annotate', '◉ Live desktop notes');
         ctx.ui.notify('pi-desktop-annotate: choose a desktop or window to annotate. Nothing is shared until you send.', 'info');
         current.native = true;
-        await run(join(root, 'build/Pi Desktop Annotate.app/Contents/MacOS/PiDesktopAnnotate'), [], { ...process.env, PI_ANNOTATE_OUTPUT: directory });
+        // LaunchServices launch: the app becomes its own TCC responsible process, so its own
+        // Screen Recording grant applies regardless of the (possibly sandboxed) launcher. `open -W`
+        // waits for the app to quit; the output path travels via argv since `open` drops our env.
+        await run('/usr/bin/open', ['-n', '-W', '-a', join(root, 'build/Pi Desktop Annotate.app'), '--args', '--output', directory]);
         if (current.cancelled) return;
         const feedback = await loadFeedbackIfPresent(directory);
         if (current.cancelled) return;

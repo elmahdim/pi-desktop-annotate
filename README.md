@@ -108,7 +108,9 @@ The extension checks/rebuilds the native helper incrementally when `/annotate` r
 
 ### First-run permissions
 
-The toolbar opens without requesting capture permission. Choose an annotation tool (Note, Region, Draw, Mask, or Crop), or click **Desktop ▾** in the toolbar, to open capture settings. Choose **Enable Screen Access** when ready. If access is declined, the toolbar stays open with an **Open Settings** option for **System Settings → Privacy & Security → Screen & System Audio Recording**. Reopen the toolbar popover after enabling access to retry. macOS may require restarting the app or launching terminal/Pi depending on permission attribution. Rebuilding or moving an ad-hoc-signed app can require permission to be granted again.
+The toolbar opens without requesting capture permission. Choose an annotation tool (Note, Region, Draw, Mask, or Crop), or click **Desktop ▾** in the toolbar, to open capture settings. Choose **Enable Screen Access** when ready. If access is declined, the toolbar stays open with an **Open Settings** option for **System Settings → Privacy & Security → Screen & System Audio Recording**. Reopen the toolbar popover after enabling access to retry.
+
+The companion is launched through LaunchServices (`open`), so it is its **own** permission target: the Screen Recording toggle to enable is **Pi Desktop Annotate** itself, not your terminal or Pi. This avoids the case where a sandboxed launcher is treated as the responsible process. After enabling, fully quit the toolbar and run `/annotate` again rather than using macOS's "Quit & Reopen". Because the app is ad-hoc signed, its permission is keyed to the built binary: rebuilding or moving it changes its identity and can require granting access again. If the toolbar keeps showing **Enable Screen Access** while Settings shows it enabled, remove the stale entry, run `tccutil reset ScreenCapture local.pi.desktop-annotate`, rebuild, and re-grant.
 
 No Accessibility or microphone permission is needed. If ScreenCaptureKit cannot identify and exclude this app, it fails rather than capturing its own toolbar/cards.
 
@@ -221,7 +223,9 @@ Protected/DRM surfaces and secure system UI may be unavailable. Fullscreen-app/S
 | --- | --- |
 | Install or launch fails on Linux/Windows | This package requires macOS 14.0 or newer. The native companion cannot run in a Linux container. |
 | Swift build fails | Check `sw_vers -productVersion`, `xcrun --find swiftc`, and `xcrun --sdk macosx --show-sdk-version`. Update macOS/Command Line Tools as needed; ensure the package's `build/` directory is writable. |
-| Toolbar opens but capture is unavailable | Enable screen access in System Settings. Reopen capture settings to retry; macOS may require restarting the companion or launching terminal/Pi. See [first-run permissions](#first-run-permissions). |
+| Toolbar opens but capture is unavailable | Enable **Pi Desktop Annotate** under Screen Recording, fully quit the toolbar, and run `/annotate` again. The companion is its own permission target (launched via LaunchServices). See [first-run permissions](#first-run-permissions). |
+| "Enable Screen Access" persists though Settings shows it enabled | The ad-hoc signature changed (rebuild/move) so the grant no longer matches. Remove the stale Screen Recording entry, run `tccutil reset ScreenCapture local.pi.desktop-annotate`, rebuild, and re-grant. |
+| Send saves a bundle to disk instead of sending to Pi | The app wasn't launched by `/annotate` (no `--output`). Close it and start from `/annotate` inside Pi. |
 | Pi asks for an image-capable model | Switch to a model that accepts images, then run `/annotate` again. |
 | Toolbar is missing after minimizing | Run `/annotate` again to restore it. |
 | Selected-window capture stops | Resizing/closing that window or changing display configuration stops capture to avoid misaligned evidence. Send or discard existing notes, then select a source again; reopen the companion after display changes. |
